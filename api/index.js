@@ -1,138 +1,85 @@
-import { renderStatsCard } from "../src/cards/stats-card.js";
-import { blacklist } from "../src/common/blacklist.js";
-import {
-  clampValue,
-  CONSTANTS,
-  parseArray,
-  parseBoolean,
-  renderError,
-} from "../src/common/utils.js";
-import { fetchStats } from "../src/fetchers/stats-fetcher.js";
-import { isLocaleAvailable } from "../src/translations.js";
+import { netlifyHandler } from './netlify-adapter.js';
+import { renderStatsCard } from '../src/cards/stats-card.js';
+import { renderTopLanguages } from '../src/cards/top-languages-card.js';
+import { renderWakatimeCard } from '../src/cards/wakatime-card.js';
+import { renderRepoCard } from '../src/cards/repo-card.js';
+import { renderGistCard } from '../src/cards/gist-card.js';
+import { blacklist } from '../src/common/blacklist.js';
+import { isLocaleAvailable } from '../src/common/utils.js';
+import { serverConfig } from '../src/common/server-configs.js';
 
-export default async (req, res) => {
-  const {
-    username,
-    hide,
-    hide_title,
-    hide_border,
-    card_width,
-    hide_rank,
-    show_icons,
-    include_all_commits,
-    line_height,
-    title_color,
-    ring_color,
-    icon_color,
-    text_color,
-    text_bold,
-    bg_color,
-    theme,
-    cache_seconds,
-    exclude_repo,
-    custom_title,
-    locale,
-    disable_animations,
-    border_radius,
-    number_format,
-    border_color,
-    rank_icon,
-    show,
-  } = req.query;
-  res.setHeader("Content-Type", "image/svg+xml");
-
-  if (blacklist.includes(username)) {
-    return res.send(
-      renderError("Something went wrong", "This username is blacklisted", {
-        title_color,
-        text_color,
-        bg_color,
-        border_color,
-        theme,
-      }),
-    );
+const handlerFn = async (req, res) => {
+  const route = req.url.split("?")[0].split("/");
+  
+  // 确保req.query存在
+  if (!req.query) {
+    req.query = {};
   }
+
+  // 调试输出请求信息
+  console.log("Path:", req.url);
+  console.log("Query:", JSON.stringify(req.query));
+  console.log("Route:", route);
+
+  if (blacklist.includes(req.query.username)) {
+    return res.send(renderError("用户名已被列入黑名单", "请联系管理员"));
+  }
+
+  const locale = req.query.locale || serverConfig.locale;
 
   if (locale && !isLocaleAvailable(locale)) {
     return res.send(
-      renderError("Something went wrong", "Language not found", {
-        title_color,
-        text_color,
-        bg_color,
-        border_color,
-        theme,
-      }),
+      renderError(
+        "无效的区域设置",
+        `区域设置 ${locale} 不可用`
+      )
     );
   }
 
   try {
-    const showStats = parseArray(show);
-    const stats = await fetchStats(
-      username,
-      parseBoolean(include_all_commits),
-      parseArray(exclude_repo),
-      showStats.includes("prs_merged") ||
-        showStats.includes("prs_merged_percentage"),
-      showStats.includes("discussions_started"),
-      showStats.includes("discussions_answered"),
-    );
+    // 处理GitHub统计卡片请求
+    if (!route[1] || route[1] === "") {
+      return res.send(await renderStatsCard(req));
+    }
 
-    let cacheSeconds = clampValue(
-      parseInt(cache_seconds || CONSTANTS.CARD_CACHE_SECONDS, 10),
-      CONSTANTS.TWELVE_HOURS,
-      CONSTANTS.TWO_DAY,
-    );
-    cacheSeconds = process.env.CACHE_SECONDS
-      ? parseInt(process.env.CACHE_SECONDS, 10) || cacheSeconds
-      : cacheSeconds;
-
-    res.setHeader(
-      "Cache-Control",
-      `max-age=${cacheSeconds}, s-maxage=${cacheSeconds}, stale-while-revalidate=${CONSTANTS.ONE_DAY}`,
-    );
-
-    return res.send(
-      renderStatsCard(stats, {
-        hide: parseArray(hide),
-        show_icons: parseBoolean(show_icons),
-        hide_title: parseBoolean(hide_title),
-        hide_border: parseBoolean(hide_border),
-        card_width: parseInt(card_width, 10),
-        hide_rank: parseBoolean(hide_rank),
-        include_all_commits: parseBoolean(include_all_commits),
-        line_height,
-        title_color,
-        ring_color,
-        icon_color,
-        text_color,
-        text_bold: parseBoolean(text_bold),
-        bg_color,
-        theme,
-        custom_title,
-        border_radius,
-        border_color,
-        number_format,
-        locale: locale ? locale.toLowerCase() : null,
-        disable_animations: parseBoolean(disable_animations),
-        rank_icon,
-        show: showStats,
-      }),
-    );
+    // 其他卡片类型
+    switch (route[1]) {
+      case "top-langs":
+        return res.send(await renderTopLanguages(req));
+      case "wakatime":
+        return res.send(await renderWakatimeCard(req));
+      case "repo":
+        return res.send(await renderRepoCard(req));
+      case "gist":
+        return res.send(await renderGistCard(req));
+      default:
+        return res.send(
+          renderError(
+            "无效的卡片类型",
+            `请使用 ?username=用户名 参数或 /repo?username=用户名&repo=仓库名`
+          )
+        );
+    }
   } catch (err) {
-    res.setHeader(
-      "Cache-Control",
-      `max-age=${CONSTANTS.ERROR_CACHE_SECONDS / 2}, s-maxage=${
-        CONSTANTS.ERROR_CACHE_SECONDS
-      }, stale-while-revalidate=${CONSTANTS.ONE_DAY}`,
-    ); // Use lower cache period for errors.
-    return res.send(
-      renderError(err.message, err.secondaryMessage, {
-        title_color,
-        text_color,
-        bg_color,
-        border_color,
-        theme,
-      }),
-    );
+    console.log(err);
+    return res.send(renderError(err.message, err.secondaryMessage));
   }
 };
+
+// 渲染错误消息的函数
+function renderError(message, secondaryMessage = "") {
+  return `
+    <svg width="495" height="120" viewBox="0 0 495 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        .text { font: 600 16px 'Segoe UI', Ubuntu, Sans-Serif; fill: #ff0000 }
+        .small { font: 600 12px 'Segoe UI', Ubuntu, Sans-Serif; fill: #ff0000 }
+      </style>
+      <rect x="0.5" y="0.5" width="494" height="99%" rx="4.5" fill="white" stroke="#E4E2E2"/>
+      <text x="25" y="45" class="text">错误: ${message}</text>
+      <text x="25" y="65" class="small">${secondaryMessage}</text>
+    </svg>
+  `;
+}
+
+// 导出Netlify函数处理器
+export const handler = netlifyHandler(handlerFn);
