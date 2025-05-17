@@ -1,12 +1,22 @@
 [build]
   command = "npm install"
-  publish = "api"
+  publish = "."
   functions = "api"
 
 [functions]
   node_bundler = "esbuild"
+  external_node_modules = ["axios", "node-fetch", "chart.js"]
 
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/index"
   status = 200
+
+[dev]
+  framework = "#custom"
+  command = "npm run dev"
+  port = 3000
+  targetPort = 3000
+
+[build.environment]
+  NODE_VERSION = "16"
